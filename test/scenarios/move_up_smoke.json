@@ -1,0 +1,102 @@
+{
+  "scenario_id": "move_up_smoke",
+  "version": 3,
+  "description": "Press W and verify that the controlled actor moves upward within the locked v1 frame budget.",
+  "harness_scene": "res://test/harnesses/movement_harness.tscn",
+  "done_contract": {
+    "input_action": "move_up",
+    "input_key": "W",
+    "min_upward_delta_pixels": 48.0,
+    "frame_budget": 20,
+    "physics_ticks_per_second": 60,
+    "controlled_actor_relative_path": "PlayerActor",
+    "initial_position": {
+      "x": 640.0,
+      "y": 360.0
+    }
+  },
+  "artifact_contract": {
+    "required_files": [
+      "summary.json",
+      "event_log.json",
+      "scene_tree.json",
+      "console.log",
+      "screenshots/before.png",
+      "screenshots/after.png"
+    ],
+    "missing_file_is_failure": true
+  },
+  "exit_codes": {
+    "pass": 0,
+    "assertion_failure": 1,
+    "runtime_error": 2,
+    "timeout": 3,
+    "artifact_generation_error": 4
+  },
+  "cli_contract": {
+    "command_template": "godot --path <project> -- --test-mode --scenario <path> --artifacts <dir>"
+  },
+  "steps": [
+    {
+      "op": "load_harness",
+      "scene": "res://test/harnesses/movement_harness.tscn"
+    },
+    {
+      "op": "checkpoint",
+      "name": "before"
+    },
+    {
+      "op": "press_action",
+      "action": "move_up"
+    },
+    {
+      "op": "wait_frames",
+      "frames": 20
+    },
+    {
+      "op": "release_action",
+      "action": "move_up"
+    },
+    {
+      "op": "checkpoint",
+      "name": "after"
+    },
+    {
+      "op": "assert_pipeline",
+      "sources": {
+        "before_y": {
+          "kind": "checkpoint",
+          "checkpoint": "before",
+          "path": "harness_state.actor_position.y"
+        },
+        "after_y": {
+          "kind": "checkpoint",
+          "checkpoint": "after",
+          "path": "harness_state.actor_position.y"
+        },
+        "threshold": {
+          "kind": "contract",
+          "path": "done_contract.min_upward_delta_pixels"
+        }
+      },
+      "pipeline": [
+        {
+          "op": "subtract",
+          "inputs": [
+            "before_y",
+            "after_y"
+          ],
+          "as": "upward_delta"
+        }
+      ],
+      "assert": {
+        "actual": "upward_delta",
+        "comparator": "gte",
+        "expected_source": "threshold"
+      }
+    },
+    {
+      "op": "quit"
+    }
+  ]
+}

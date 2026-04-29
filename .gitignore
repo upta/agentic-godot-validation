@@ -1,0 +1,27 @@
+# Godot generated data
+.godot/
+.import/
+
+# Godot Mono and C# build outputs
+.mono/
+mono_crash.*.json
+**/bin/
+**/obj/
+
+# Validation artifacts
+artifacts/
+
+# Editor and IDE metadata
+.vscode/
+.idea/
+.vs/
+
+# OS junk
+Thumbs.db
+.DS_Store
+
+# Logs and local temp files
+*.log
+*.tmp
+*.temp
+*.swp
