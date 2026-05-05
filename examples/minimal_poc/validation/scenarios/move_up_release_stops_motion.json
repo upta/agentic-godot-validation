@@ -1,0 +1,152 @@
+{
+  "scenario_id": "move_up_release_stops_motion",
+  "version": 4,
+  "description": "Press W, prove the actor moves upward, then prove it stops moving once input is released.",
+  "harness_scene": "res://examples/minimal_poc/validation/harnesses/movement_harness.tscn",
+  "done_contract": {
+    "input_action": "move_up",
+    "input_key": "W",
+    "press_frame_budget": 10,
+    "settle_frame_budget": 10,
+    "min_upward_delta_pixels": 32.0,
+    "max_post_release_drift_pixels": 0.1,
+    "physics_ticks_per_second": 60,
+    "controlled_actor_relative_path": "PlayerActor",
+    "initial_position": {
+      "x": 640.0,
+      "y": 360.0
+    }
+  },
+  "artifact_contract": {
+    "required_files": [
+      "summary.json",
+      "event_log.json",
+      "scene_tree.json",
+      "console.log",
+      "screenshots/before.png",
+      "screenshots/released.png",
+      "screenshots/settled.png"
+    ],
+    "missing_file_is_failure": true
+  },
+  "exit_codes": {
+    "pass": 0,
+    "assertion_failure": 1,
+    "runtime_error": 2,
+    "timeout": 3,
+    "artifact_generation_error": 4
+  },
+  "cli_contract": {
+    "command_template": "godot --path <project> -- --test-mode --scenario <path> --artifacts <dir>"
+  },
+  "steps": [
+    {
+      "op": "load_harness",
+      "scene": "res://examples/minimal_poc/validation/harnesses/movement_harness.tscn"
+    },
+    {
+      "op": "checkpoint",
+      "name": "before"
+    },
+    {
+      "op": "press_action",
+      "action": "move_up"
+    },
+    {
+      "op": "wait_frames",
+      "frames": 10
+    },
+    {
+      "op": "release_action",
+      "action": "move_up"
+    },
+    {
+      "op": "checkpoint",
+      "name": "released"
+    },
+    {
+      "op": "wait_frames",
+      "frames": 10
+    },
+    {
+      "op": "checkpoint",
+      "name": "settled"
+    },
+    {
+      "op": "assert_pipeline",
+      "sources": {
+        "before_y": {
+          "kind": "checkpoint",
+          "checkpoint": "before",
+          "path": "harness_state.actor_position.y"
+        },
+        "released_y": {
+          "kind": "checkpoint",
+          "checkpoint": "released",
+          "path": "harness_state.actor_position.y"
+        },
+        "movement_threshold": {
+          "kind": "contract",
+          "path": "done_contract.min_upward_delta_pixels"
+        }
+      },
+      "pipeline": [
+        {
+          "op": "subtract",
+          "inputs": [
+            "before_y",
+            "released_y"
+          ],
+          "as": "upward_delta"
+        }
+      ],
+      "assert": {
+        "actual": "upward_delta",
+        "comparator": "gte",
+        "expected_source": "movement_threshold"
+      }
+    },
+    {
+      "op": "assert_pipeline",
+      "sources": {
+        "released_y": {
+          "kind": "checkpoint",
+          "checkpoint": "released",
+          "path": "harness_state.actor_position.y"
+        },
+        "settled_y": {
+          "kind": "checkpoint",
+          "checkpoint": "settled",
+          "path": "harness_state.actor_position.y"
+        },
+        "drift_threshold": {
+          "kind": "contract",
+          "path": "done_contract.max_post_release_drift_pixels"
+        }
+      },
+      "pipeline": [
+        {
+          "op": "subtract",
+          "inputs": [
+            "released_y",
+            "settled_y"
+          ],
+          "as": "drift_raw"
+        },
+        {
+          "op": "abs",
+          "input": "drift_raw",
+          "as": "drift_abs"
+        }
+      ],
+      "assert": {
+        "actual": "drift_abs",
+        "comparator": "lte",
+        "expected_source": "drift_threshold"
+      }
+    },
+    {
+      "op": "quit"
+    }
+  ]
+}

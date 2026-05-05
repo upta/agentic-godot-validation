@@ -1,13 +1,13 @@
 # Scenario Format
 
-The current scenario format is a JSON object executed entirely inside Godot by `test/scripts/drivers/scenario_driver.gd`.
+The current scenario format is a JSON object executed entirely inside Godot by `addons/agentic_godot_validation/runtime/drivers/scenario_driver.gd`.
 
 ## Required Top-Level Fields
 
 - `scenario_id`: stable identifier for artifact folder naming and summaries.
 - `version`: schema version for the scenario file.
 - `description`: human-readable scenario description.
-- `harness_scene`: default harness scene path under `res://test/harnesses/`.
+- `harness_scene`: default harness scene path under `res://validation/harnesses/` in a host project.
 - `done_contract`: machine-readable thresholds and expectations used by verifier rules.
 - `artifact_contract`: required artifact files that must exist after the run.
 - `exit_codes`: scenario exit code mapping.
@@ -23,7 +23,7 @@ Loads the harness scene for the run and resets it if the harness exposes `reset_
 ```json
 {
   "op": "load_harness",
-  "scene": "res://test/harnesses/movement_harness.tscn"
+  "scene": "res://validation/harnesses/movement_harness.tscn"
 }
 ```
 
@@ -166,6 +166,11 @@ Harness guidance in v3:
 - Prefer exposing semantic node facts under `harness_state.nodes.<alias>` for reusable UI and scene assertions.
 - Prefer exposing reusable signal facts under `harness_state.signals.<alias>.<signal_alias>` when interactions are best validated by emitted signals.
 - Signal probes currently expose count-oriented facts such as `count`, `connected`, `signal_name`, `source_path`, and `last_emitted_msec`.
+
+## Packaging Note
+
+- In a consuming project, scenarios belong under `validation/scenarios/` and harness scenes belong under `validation/harnesses/`.
+- This package repository keeps its bundled reference scenarios under `examples/minimal_poc/validation/scenarios/` so the example project does not define the reusable host layout.
 
 ### `quit`
 

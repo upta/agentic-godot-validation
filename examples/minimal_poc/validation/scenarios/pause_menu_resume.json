@@ -1,0 +1,109 @@
+{
+  "scenario_id": "pause_menu_resume",
+  "version": 4,
+  "description": "Open the pause menu, activate the focused resume button, and verify the menu closes with reusable signal evidence.",
+  "harness_scene": "res://examples/minimal_poc/validation/harnesses/pause_menu_harness.tscn",
+  "done_contract": {
+    "pause_action": "pause",
+    "pause_key": "Escape",
+    "accept_action": "ui_accept",
+    "accept_key": "Enter",
+    "open_frame_budget": 2,
+    "resume_frame_budget": 2
+  },
+  "artifact_contract": {
+    "required_files": [
+      "summary.json",
+      "event_log.json",
+      "scene_tree.json",
+      "console.log",
+      "screenshots/before.png",
+      "screenshots/opened.png",
+      "screenshots/after_resume.png"
+    ],
+    "missing_file_is_failure": true
+  },
+  "exit_codes": {
+    "pass": 0,
+    "assertion_failure": 1,
+    "runtime_error": 2,
+    "timeout": 3,
+    "artifact_generation_error": 4
+  },
+  "cli_contract": {
+    "command_template": "godot --path <project> -- --test-mode --scenario <path> --artifacts <dir>"
+  },
+  "steps": [
+    {
+      "op": "load_harness",
+      "scene": "res://examples/minimal_poc/validation/harnesses/pause_menu_harness.tscn"
+    },
+    {
+      "op": "checkpoint",
+      "name": "before"
+    },
+    {
+      "op": "press_action",
+      "action": "pause"
+    },
+    {
+      "op": "wait_frames",
+      "frames": 2
+    },
+    {
+      "op": "release_action",
+      "action": "pause"
+    },
+    {
+      "op": "checkpoint",
+      "name": "opened"
+    },
+    {
+      "op": "press_action",
+      "action": "ui_accept"
+    },
+    {
+      "op": "wait_frames",
+      "frames": 2
+    },
+    {
+      "op": "release_action",
+      "action": "ui_accept"
+    },
+    {
+      "op": "checkpoint",
+      "name": "after_resume"
+    },
+    {
+      "op": "assert_value",
+      "checkpoint": "after_resume",
+      "path": "harness_state.nodes.pause_menu.visible",
+      "comparator": "eq",
+      "expected": false
+    },
+    {
+      "op": "assert_value",
+      "checkpoint": "after_resume",
+      "path": "harness_state.nodes.resume_button.visible",
+      "comparator": "eq",
+      "expected": false
+    },
+    {
+      "op": "assert_value",
+      "checkpoint": "after_resume",
+      "path": "harness_state.signals.pause_menu.resume_requested.count",
+      "comparator": "gte",
+      "expected": 1
+    },
+    {
+      "op": "assert_value",
+      "checkpoint": "after_resume",
+      "path": "harness_state.signals.pause_menu.menu_closed.count",
+      "comparator": "gte",
+      "expected": 1
+    },
+    {
+      "op": "quit"
+    }
+  ]
+}

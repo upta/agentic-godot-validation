@@ -1,5 +1,5 @@
 param(
-    [string]$ScenarioDirectory = "test/scenarios",
+    [string]$ScenarioDirectory = "",
     [string]$ProjectPath = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
     [string]$GodotExe = $env:GODOT_EXE,
     [int]$KeepLatestPerScenario = 10,
@@ -14,6 +14,22 @@ function Resolve-ScenarioDirectory {
         [string]$RequestedScenarioDirectory,
         [string]$ResolvedProjectPath
     )
+
+    if ([string]::IsNullOrWhiteSpace($RequestedScenarioDirectory)) {
+        $defaultCandidates = @(
+            "validation/scenarios",
+            "examples/minimal_poc/validation/scenarios"
+        )
+
+        foreach ($candidate in $defaultCandidates) {
+            $candidatePath = Join-Path $ResolvedProjectPath $candidate
+            if ((Test-Path $candidatePath) -and (Get-ChildItem -Path $candidatePath -Filter *.json -File -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+                return (Resolve-Path $candidatePath).Path
+            }
+        }
+
+        throw "Could not locate a scenario directory under validation/scenarios or examples/minimal_poc/validation/scenarios."
+    }
 
     if ([System.IO.Path]::IsPathRooted($RequestedScenarioDirectory)) {
         return (Resolve-Path $RequestedScenarioDirectory).Path
@@ -232,7 +248,7 @@ $suite = [ordered]@{
 
 $suite | ConvertTo-Json -Depth 20 | Set-Content -Path $suiteJsonPath -Encoding utf8
 
-& $pruneScriptPath -ProjectPath $resolvedProjectPath -KeepLatestPerScenario $KeepLatestPerScenario -KeepLatestSuiteRuns $KeepLatestSuiteRuns | Out-Null
+& $pruneScriptPath -ProjectPath $resolvedProjectPath -KeepLatestPerScenario $KeepLatestPerScenario -KeepLatestSuiteRuns $KeepLatestSuiteRuns -ScenarioDirectories $resolvedScenarioDirectory | Out-Null
 
 Write-Output ("SUITEARTIFACTS " + $suiteRunPath)
 Write-Output ("SUITE " + ($suite | ConvertTo-Json -Depth 10 -Compress))

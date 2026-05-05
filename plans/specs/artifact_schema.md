@@ -270,11 +270,13 @@ Expected fields:
 The local PowerShell tooling prunes artifacts to keep the artifact tree bounded during iterative development.
 
 - `tools/run_scenario.ps1` keeps the latest `10` runs per active scenario by default.
-- `tools/prune_artifacts.ps1` removes artifact directories for scenario ids that no longer exist under `test/scenarios/`.
+- `tools/prune_artifacts.ps1` removes artifact directories for scenario ids that no longer exist under the active scenario directory.
 - `tools/prune_artifacts.ps1` rebuilds `artifacts/index.json` and `artifacts/<scenario_id>/latest.json` after pruning.
 - `tools/prune_artifacts.ps1` also keeps the latest suite runs under `artifacts/suites/` and rebuilds `artifacts/suites/index.json` plus `artifacts/latest_suite.json`.
 - Use `tools/run_scenario.ps1 -SkipArtifactPrune` to keep all generated runs temporarily.
 - Use `tools/prune_artifacts.ps1 -KeepLatestPerScenario <n>` to rebalance retention manually.
 - Use `tools/prune_artifacts.ps1 -KeepLatestSuiteRuns <n>` to rebalance retained suite runs manually.
 - Use `tools/run_all_scenarios.ps1 -RepeatCount <n>` to run soak or repeat passes and record flakiness in a retained suite artifact.
+
+The runners prefer `validation/scenarios/` in a consuming project and fall back to `examples/minimal_poc/validation/scenarios/` inside this package repository.
 

@@ -3,22 +3,94 @@ param(
     [string]$ProjectPath = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
     [int]$KeepLatestPerScenario = 10,
     [int]$KeepLatestSuiteRuns = 10,
-    [switch]$RemoveUnknownScenarioDirs = $true
+    [switch]$RemoveUnknownScenarioDirs = $true,
+    [string[]]$ScenarioDirectories = @()
 )
 
 $ErrorActionPreference = "Stop"
 
+function Resolve-ScenarioDirectories {
+    param(
+        [string]$ResolvedProjectPath,
+        [string[]]$RequestedScenarioDirectories = @()
+    )
+
+    $candidateDirectories = @()
+    if ($RequestedScenarioDirectories -and $RequestedScenarioDirectories.Count -gt 0) {
+        foreach ($requestedScenarioDirectory in $RequestedScenarioDirectories) {
+            if ([string]::IsNullOrWhiteSpace($requestedScenarioDirectory)) {
+                continue
+            }
+
+            $candidatePath = $requestedScenarioDirectory
+            if (-not [System.IO.Path]::IsPathRooted($candidatePath)) {
+                $candidatePath = Join-Path $ResolvedProjectPath $candidatePath
+            }
+
+            if (-not (Test-Path $candidatePath)) {
+                throw "Scenario directory does not exist: $requestedScenarioDirectory"
+            }
+
+            $candidateDirectories += (Resolve-Path $candidatePath).Path
+        }
+    }
+    else {
+        $candidateDirectories = @(
+            Join-Path $ResolvedProjectPath "validation/scenarios",
+            Join-Path $ResolvedProjectPath "examples/minimal_poc/validation/scenarios"
+        )
+    }
+
+    $resolvedScenarioDirectories = @()
+    foreach ($candidateDirectory in $candidateDirectories) {
+        if (-not (Test-Path $candidateDirectory)) {
+            continue
+        }
+
+        $resolvedCandidateDirectory = (Resolve-Path $candidateDirectory).Path
+        $scenarioFile = Get-ChildItem -Path $resolvedCandidateDirectory -Filter *.json -File -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -eq $scenarioFile) {
+            continue
+        }
+
+        if ($resolvedScenarioDirectories -notcontains $resolvedCandidateDirectory) {
+            $resolvedScenarioDirectories += $resolvedCandidateDirectory
+        }
+    }
+
+    return $resolvedScenarioDirectories
+}
+
 function Get-ScenarioContracts {
-    param([string]$ResolvedProjectPath)
+    param(
+        [string]$ResolvedProjectPath,
+        [string[]]$RequestedScenarioDirectories = @()
+    )
 
-    $scenarioFiles = Get-ChildItem -Path (Join-Path $ResolvedProjectPath "test/scenarios") -Filter *.json -File -ErrorAction SilentlyContinue
+    $resolvedScenarioDirectories = @(Resolve-ScenarioDirectories -ResolvedProjectPath $ResolvedProjectPath -RequestedScenarioDirectories $RequestedScenarioDirectories)
+    if ($resolvedScenarioDirectories.Count -eq 0) {
+        return @()
+    }
+
     $contracts = @()
+    $seenScenarioIds = @{}
 
-    foreach ($scenarioFile in $scenarioFiles) {
-        $contract = Get-Content -Path $scenarioFile.FullName -Raw | ConvertFrom-Json -AsHashtable
-        if ($null -ne $contract -and $contract.ContainsKey("scenario_id")) {
+    foreach ($resolvedScenarioDirectory in $resolvedScenarioDirectories) {
+        $scenarioFiles = Get-ChildItem -Path $resolvedScenarioDirectory -Filter *.json -File -ErrorAction SilentlyContinue
+        foreach ($scenarioFile in $scenarioFiles) {
+            $contract = Get-Content -Path $scenarioFile.FullName -Raw | ConvertFrom-Json -AsHashtable
+            if ($null -eq $contract -or -not $contract.ContainsKey("scenario_id")) {
+                continue
+            }
+
+            $scenarioId = [string]$contract.scenario_id
+            if ([string]::IsNullOrWhiteSpace($scenarioId) -or $seenScenarioIds.ContainsKey($scenarioId)) {
+                continue
+            }
+
+            $seenScenarioIds[$scenarioId] = $true
             $contracts += [pscustomobject]@{
-                ScenarioId = [string]$contract.scenario_id
+                ScenarioId = $scenarioId
                 FilePath = $scenarioFile.FullName
             }
         }
@@ -232,26 +304,33 @@ if (-not (Test-Path $artifactsRoot)) {
     return
 }
 
-$scenarioContracts = Get-ScenarioContracts -ResolvedProjectPath $resolvedProjectPath
-$activeScenarioIds = @{}
-foreach ($scenarioContract in $scenarioContracts) {
-    $activeScenarioIds[[string]$scenarioContract.ScenarioId] = $true
+$scenarioContracts = @(Get-ScenarioContracts -ResolvedProjectPath $resolvedProjectPath -RequestedScenarioDirectories $ScenarioDirectories)
+$activeScenarioIds = @(
+    $scenarioContracts |
+        ForEach-Object { [string]$_.ScenarioId } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        Sort-Object -Unique
+)
+
+$allowUnknownScenarioDirectoryRemoval = [bool]$RemoveUnknownScenarioDirs -and $scenarioContracts.Count -gt 0
+if ([bool]$RemoveUnknownScenarioDirs -and -not $allowUnknownScenarioDirectoryRemoval) {
+    Write-Warning "Skipping unknown scenario directory removal because no scenario contracts were discovered."
 }
 
 $removed = @()
-$scenarioDirectories = Get-ChildItem -Path $artifactsRoot -Directory | Sort-Object Name
-foreach ($scenarioDirectory in $scenarioDirectories) {
-    $scenarioId = [string]$scenarioDirectory.Name
+$artifactScenarioDirectories = Get-ChildItem -Path $artifactsRoot -Directory | Sort-Object Name
+foreach ($artifactScenarioDirectory in $artifactScenarioDirectories) {
+    $scenarioId = [string]$artifactScenarioDirectory.Name
 
     if ($scenarioId -eq "suites") {
         continue
     }
 
-    $isActiveScenario = $activeScenarioIds.ContainsKey($scenarioId)
+    $isActiveScenario = $activeScenarioIds -contains $scenarioId
 
     if (-not $isActiveScenario) {
-        if ($RemoveUnknownScenarioDirs) {
-            $removed += Remove-ArtifactDirectory -Directory $scenarioDirectory -Reason "unknown_scenario"
+        if ($allowUnknownScenarioDirectoryRemoval) {
+            $removed += Remove-ArtifactDirectory -Directory $artifactScenarioDirectory -Reason "unknown_scenario"
         }
         continue
     }
@@ -260,7 +339,7 @@ foreach ($scenarioDirectory in $scenarioDirectories) {
         throw "KeepLatestPerScenario must be 0 or greater."
     }
 
-    $runDirectories = Get-ChildItem -Path $scenarioDirectory.FullName -Directory | Sort-Object Name -Descending
+    $runDirectories = Get-ChildItem -Path $artifactScenarioDirectory.FullName -Directory | Sort-Object Name -Descending
     if ($KeepLatestPerScenario -eq 0) {
         $directoriesToRemove = $runDirectories
     }
@@ -295,4 +374,4 @@ if (Test-Path $suiteRoot) {
 Write-ArtifactManifests -ArtifactsRoot $artifactsRoot -ResolvedProjectPath $resolvedProjectPath -KeepLatestPerScenario $KeepLatestPerScenario
 Write-SuiteManifests -ArtifactsRoot $artifactsRoot -ResolvedProjectPath $resolvedProjectPath -KeepLatestSuiteRuns $KeepLatestSuiteRuns
 
-Write-Output ("PRUNE " + (([ordered]@{ removed = $removed; kept_latest_per_scenario = $KeepLatestPerScenario; kept_latest_suite_runs = $KeepLatestSuiteRuns; remove_unknown_scenario_dirs = [bool]$RemoveUnknownScenarioDirs }) | ConvertTo-Json -Compress))
+Write-Output ("PRUNE " + (([ordered]@{ removed = $removed; kept_latest_per_scenario = $KeepLatestPerScenario; kept_latest_suite_runs = $KeepLatestSuiteRuns; remove_unknown_scenario_dirs = $allowUnknownScenarioDirectoryRemoval; scenario_contract_count = $scenarioContracts.Count }) | ConvertTo-Json -Compress))

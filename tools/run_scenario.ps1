@@ -1,5 +1,5 @@
 param(
-    [string]$Scenario = "test/scenarios/move_up_smoke.json",
+    [string]$Scenario = "",
     [string]$ProjectPath = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
     [string]$GodotExe = $env:GODOT_EXE,
     [int]$KeepLatestPerScenario = 10,
@@ -28,6 +28,22 @@ function Resolve-ScenarioPath {
         [string]$RequestedScenario,
         [string]$ResolvedProjectPath
     )
+
+    if ([string]::IsNullOrWhiteSpace($RequestedScenario)) {
+        $defaultCandidates = @(
+            "validation/scenarios/move_up_smoke.json",
+            "examples/minimal_poc/validation/scenarios/move_up_smoke.json"
+        )
+
+        foreach ($candidate in $defaultCandidates) {
+            $candidatePath = Join-Path $ResolvedProjectPath $candidate
+            if (Test-Path $candidatePath) {
+                return (Resolve-Path $candidatePath).Path
+            }
+        }
+
+        throw "Could not locate a default scenario contract under validation/scenarios or examples/minimal_poc/validation/scenarios."
+    }
 
     if ([System.IO.Path]::IsPathRooted($RequestedScenario)) {
         return (Resolve-Path $RequestedScenario).Path
@@ -60,6 +76,7 @@ function Get-ScenarioContract {
 $resolvedProjectPath = (Resolve-Path $ProjectPath).Path
 $resolvedScenarioPath = Resolve-ScenarioPath -RequestedScenario $Scenario -ResolvedProjectPath $resolvedProjectPath
 $scenarioContract = Get-ScenarioContract -ScenarioFile $resolvedScenarioPath
+$resolvedScenarioDirectory = Split-Path -Path $resolvedScenarioPath -Parent
 $scenarioId = [string]$scenarioContract.scenario_id
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
 $runArtifactsPath = Join-Path $resolvedProjectPath (Join-Path "artifacts" (Join-Path $scenarioId $timestamp))
@@ -118,7 +135,7 @@ $result = [ordered]@{
 if (-not $SkipArtifactPrune) {
     try {
         $pruneScriptPath = Join-Path $PSScriptRoot "prune_artifacts.ps1"
-        & $pruneScriptPath -ProjectPath $resolvedProjectPath -KeepLatestPerScenario $KeepLatestPerScenario | Out-Null
+        & $pruneScriptPath -ProjectPath $resolvedProjectPath -KeepLatestPerScenario $KeepLatestPerScenario -ScenarioDirectories $resolvedScenarioDirectory | Out-Null
     }
     catch {
         Write-Warning ("Artifact pruning failed: " + $_.Exception.Message)

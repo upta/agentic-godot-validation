@@ -10,8 +10,8 @@ config_version=5
 
 [application]
 
-config/name="Agentic Godot Validation"
-run/main_scene="res://bootstrap/app_root.tscn"
+config/name="Agentic Godot Validation Kit"
+run/main_scene="res://examples/minimal_poc/bootstrap/app_root.tscn"
 
 [display]
 
