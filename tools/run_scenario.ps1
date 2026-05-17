@@ -2,6 +2,7 @@ param(
     [string]$Scenario = "",
     [string]$ProjectPath = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
     [string]$GodotExe = $env:GODOT_EXE,
+    [int]$Screen = -1,
     [int]$KeepLatestPerScenario = 10,
     [switch]$SkipArtifactPrune
 )
@@ -88,7 +89,14 @@ $consoleLogPath = Join-Path $runArtifactsPath "console.log"
 
 $arguments = @(
     "--path", $resolvedProjectPath,
-    "--log-file", $consoleLogPath,
+    "--log-file", $consoleLogPath
+)
+
+if ($Screen -ge 0) {
+    $arguments += @("--screen", $Screen.ToString())
+}
+
+$arguments += @(
     "--",
     "--test-mode",
     "--scenario", $resScenarioPath,

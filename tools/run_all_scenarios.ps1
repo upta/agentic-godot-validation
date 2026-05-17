@@ -2,6 +2,7 @@ param(
     [string]$ScenarioDirectory = "",
     [string]$ProjectPath = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
     [string]$GodotExe = $env:GODOT_EXE,
+    [int]$Screen = -1,
     [int]$KeepLatestPerScenario = 10,
     [int]$KeepLatestSuiteRuns = 10,
     [int]$RepeatCount = 1
@@ -113,6 +114,7 @@ for ($iteration = 1; $iteration -le $RepeatCount; $iteration++) {
             -Scenario $scenarioFile.FullName `
             -ProjectPath $resolvedProjectPath `
             -GodotExe $GodotExe `
+            -Screen $Screen `
             -KeepLatestPerScenario $KeepLatestPerScenario `
             -SkipArtifactPrune
         $runExitCode = $LASTEXITCODE
