@@ -1,6 +1,11 @@
 param(
     [string]$Scenario = "",
-    [string]$ProjectPath = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
+    [string]$ProjectPath = $(
+        $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+        if (Test-Path (Join-Path $root "project.godot")) { $root }
+        elseif (Test-Path (Join-Path $root "client" "project.godot")) { Join-Path $root "client" }
+        else { $root }
+    ),
     [string]$GodotExe = $env:GODOT_EXE,
     [int]$Screen = -1,
     [int]$KeepLatestPerScenario = 10,
@@ -50,7 +55,18 @@ function Resolve-ScenarioPath {
         return (Resolve-Path $RequestedScenario).Path
     }
 
-    return (Resolve-Path (Join-Path $ResolvedProjectPath $RequestedScenario)).Path
+    $projectRelativePath = Join-Path $ResolvedProjectPath $RequestedScenario
+    if (Test-Path $projectRelativePath) {
+        return (Resolve-Path $projectRelativePath).Path
+    }
+
+    $repoRoot = Split-Path $ResolvedProjectPath -Parent
+    $repoRelativePath = Join-Path $repoRoot $RequestedScenario
+    if (Test-Path $repoRelativePath) {
+        return (Resolve-Path $repoRelativePath).Path
+    }
+
+    return (Resolve-Path $projectRelativePath).Path
 }
 
 function Convert-ToResPath {

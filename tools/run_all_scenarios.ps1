@@ -1,6 +1,11 @@
 param(
     [string]$ScenarioDirectory = "",
-    [string]$ProjectPath = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
+    [string]$ProjectPath = $(
+        $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+        if (Test-Path (Join-Path $root "project.godot")) { $root }
+        elseif (Test-Path (Join-Path $root "client" "project.godot")) { Join-Path $root "client" }
+        else { $root }
+    ),
     [string]$GodotExe = $env:GODOT_EXE,
     [int]$Screen = -1,
     [int]$KeepLatestPerScenario = 10,
