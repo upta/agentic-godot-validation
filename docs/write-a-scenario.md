@@ -18,6 +18,7 @@ Use:
 
 - `assert_value` for direct checkpoint reads
 - `assert_pipeline` for named-source and contract-sourced derived checks
+- `wait_until` for conditions with nondeterministic timing (network round-trips, deferred spawns) — it polls live harness state until the condition holds or a frame budget expires
 
 Avoid adding bespoke verifier ops unless the generic model truly breaks down.
 

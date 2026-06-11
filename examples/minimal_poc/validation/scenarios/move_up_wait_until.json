@@ -1,0 +1,62 @@
+{
+  "scenario_id": "move_up_wait_until",
+  "version": 3,
+  "description": "Press W and wait_until the actor's upward displacement crosses the contract threshold, polling live state instead of waiting a fixed frame count.",
+  "harness_scene": "res://examples/minimal_poc/validation/harnesses/movement_harness.tscn",
+  "done_contract": {
+    "input_action": "move_up",
+    "input_key": "W",
+    "min_upward_delta_pixels": 48.0,
+    "frame_budget": 60,
+    "physics_ticks_per_second": 60,
+    "controlled_actor_relative_path": "PlayerActor"
+  },
+  "artifact_contract": {
+    "required_files": [
+      "summary.json",
+      "event_log.json",
+      "scene_tree.json",
+      "console.log",
+      "screenshots/after_move.png"
+    ],
+    "missing_file_is_failure": true
+  },
+  "exit_codes": {
+    "pass": 0,
+    "assertion_failure": 1,
+    "runtime_error": 2,
+    "timeout": 3,
+    "artifact_generation_error": 4
+  },
+  "cli_contract": {
+    "command_template": "godot --path <project> -- --test-mode --scenario <path> --artifacts <dir>"
+  },
+  "steps": [
+    {
+      "op": "load_harness",
+      "scene": "res://examples/minimal_poc/validation/harnesses/movement_harness.tscn"
+    },
+    {
+      "op": "press_action",
+      "action": "move_up"
+    },
+    {
+      "op": "wait_until",
+      "path": "harness_state.actor_upward_displacement",
+      "comparator": "gte",
+      "expected": 48.0,
+      "timeout_frames": 60
+    },
+    {
+      "op": "release_action",
+      "action": "move_up"
+    },
+    {
+      "op": "checkpoint",
+      "name": "after_move"
+    },
+    {
+      "op": "quit"
+    }
+  ]
+}

@@ -18,6 +18,28 @@ const SUPPORTED_PIPELINE_OPERATIONS := [
 	"abs",
 ]
 
+func is_supported_comparator(comparator: String) -> bool:
+	return SUPPORTED_VALUE_COMPARATORS.has(comparator)
+
+func evaluate_live_condition(live_root: Dictionary, path: String, comparator: String, expected_value: Variant) -> Dictionary:
+	var resolution: Dictionary = _resolve_root_value(live_root, path, "Path %s was not available in the live sample." % path)
+	if not bool(resolution.get("found", false)):
+		return {
+			"found": false,
+			"passed": false,
+			"observed": null,
+			"message": str(resolution.get("message", "Live path could not be resolved.")),
+		}
+
+	var observed_value: Variant = resolution.get("value", null)
+	var comparison: Dictionary = _compare_values(observed_value, comparator, expected_value)
+	return {
+		"found": true,
+		"passed": bool(comparison.get("comparable", true)) and bool(comparison.get("passed", false)),
+		"observed": observed_value,
+		"message": str(comparison.get("message", "")),
+	}
+
 func verify_value(checkpoints: Dictionary, step: Dictionary) -> Dictionary:
 	var checkpoint_name: String = str(step.get("checkpoint", "after"))
 	var path: String = str(step.get("path", ""))

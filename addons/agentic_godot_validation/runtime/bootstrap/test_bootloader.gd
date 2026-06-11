@@ -149,8 +149,14 @@ func _derive_timeout_seconds(contract: Dictionary) -> float:
 	var steps_variant: Variant = contract.get("steps", [])
 	if steps_variant is Array:
 		for step_variant in steps_variant:
-			if step_variant is Dictionary and str(step_variant.get("op", "")) == "wait_frames":
-				wait_frames += int(step_variant.get("frames", 0))
+			if not (step_variant is Dictionary):
+				continue
+			var step: Dictionary = step_variant
+			match str(step.get("op", "")):
+				"wait_frames":
+					wait_frames += int(step.get("frames", 0))
+				"wait_until":
+					wait_frames += int(step.get("timeout_frames", ScenarioDriverScript.DEFAULT_WAIT_UNTIL_TIMEOUT_FRAMES))
 
 	var done_contract: Dictionary = contract.get("done_contract", {})
 	var frame_budget: int = int(done_contract.get("frame_budget", FIXED_PHYSICS_TPS))

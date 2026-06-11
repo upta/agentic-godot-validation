@@ -71,6 +71,30 @@ Waits an exact number of physics frames.
 }
 ```
 
+### `wait_until`
+
+Polls the harness's live `get_observed_state()` until a condition holds, or fails with `assertion_failure` when `timeout_frames` physics frames elapse. Use this instead of `wait_frames` whenever the wait depends on nondeterministic timing (network round-trips, deferred spawns, async loads).
+
+```json
+{
+  "op": "wait_until",
+  "path": "harness_state.connection.player_count",
+  "comparator": "gte",
+  "expected": 2,
+  "timeout_frames": 300,
+  "poll_every_frames": 1
+}
+```
+
+Rules:
+
+- `path` resolves against a live sample shaped `{ "harness_state": <get_observed_state()> }`, so paths use the same `harness_state.` prefix as checkpoint assertions.
+- The condition is evaluated immediately (frame 0) and then every `poll_every_frames` (default 1) physics frames.
+- `timeout_frames` defaults to 300 (5 seconds at 60 TPS) and must be positive.
+- A path that does not resolve yet, or a comparator/type mismatch, counts as "not yet" and keeps polling — live state may legitimately appear later. Only an unsupported comparator name is an immediate runtime error.
+- On success, the verification records `frames_waited` and the final observed value.
+- On timeout, the runtime captures a debug checkpoint named `wait_until_timeout_step_<index>` (including a screenshot) and fails with the last observed value as evidence.
+
 ### `assert_value`
 
 Evaluates a single value already captured in a checkpoint using a dot-path resolver and comparator. Keep using this for direct point checks that do not need contract-sourced math.
@@ -187,5 +211,5 @@ Stops scenario execution and returns control to the bootloader for final artifac
 The bootloader derives the scenario timeout from the scenario itself instead of locking a separate constant.
 
 - Formula: `max(5.0, max(total_wait_frames, frame_budget) / physics_ticks_per_second + 3.0)`
-- `total_wait_frames` is the sum of all `wait_frames` steps.
+- `total_wait_frames` is the sum of all `wait_frames` steps' `frames` plus all `wait_until` steps' `timeout_frames` (default 300).
 - `frame_budget` and `physics_ticks_per_second` come from `done_contract`.

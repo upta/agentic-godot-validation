@@ -1,5 +1,8 @@
 extends Node
 
+const DEFAULT_WAIT_UNTIL_TIMEOUT_FRAMES := 300
+const DEFAULT_WAIT_UNTIL_POLL_FRAMES := 1
+
 var current_physics_frame: int = 0
 var loaded_harness: Node
 var stop_requested: bool = false
@@ -79,6 +82,9 @@ func _execute_step(step: Dictionary, step_index: int) -> Dictionary:
 		"wait_frames":
 			var wait_result: Dictionary = await _step_wait_frames(step)
 			return _complete_step(step_index, op, wait_result)
+		"wait_until":
+			var wait_until_result: Dictionary = await _step_wait_until(step, step_index)
+			return _complete_step(step_index, op, wait_until_result)
 		"assert_pipeline":
 			var pipeline_assertion_result: Dictionary = _step_assert_pipeline(step, step_index)
 			return _complete_step(step_index, op, pipeline_assertion_result)
@@ -196,6 +202,89 @@ func _step_wait_frames(step: Dictionary) -> Dictionary:
 		"frames": frame_count,
 		"should_stop": false,
 	}
+
+func _step_wait_until(step: Dictionary, step_index: int) -> Dictionary:
+	if loaded_harness == null or not is_instance_valid(loaded_harness):
+		inspector.record_error("wait_until step requires a loaded harness.", current_physics_frame)
+		return _stop_with_result("runtime_error", 2, "wait_until step requires a loaded harness.")
+
+	var path: String = str(step.get("path", ""))
+	if path.is_empty():
+		inspector.record_error("wait_until step requires a non-empty path.", current_physics_frame)
+		return _stop_with_result("runtime_error", 2, "wait_until step requires a non-empty path.")
+
+	var comparator: String = str(step.get("comparator", "eq"))
+	if not verifier.is_supported_comparator(comparator):
+		inspector.record_error("wait_until step referenced unsupported comparator: %s" % comparator, current_physics_frame)
+		return _stop_with_result("runtime_error", 2, "wait_until step referenced unsupported comparator: %s" % comparator)
+
+	var timeout_frames: int = int(step.get("timeout_frames", DEFAULT_WAIT_UNTIL_TIMEOUT_FRAMES))
+	if timeout_frames <= 0:
+		inspector.record_error("wait_until step requires a positive timeout_frames.", current_physics_frame)
+		return _stop_with_result("runtime_error", 2, "wait_until step requires a positive timeout_frames.")
+
+	var expected_value: Variant = step.get("expected", null)
+	var poll_every_frames: int = maxi(1, int(step.get("poll_every_frames", DEFAULT_WAIT_UNTIL_POLL_FRAMES)))
+	var frames_waited: int = 0
+	var last_evaluation: Dictionary = {}
+
+	while true:
+		# Path-not-found and comparator/type mismatches are treated as "not yet",
+		# not errors: live state (network, deferred spawns) may legitimately appear later.
+		last_evaluation = verifier.evaluate_live_condition(_sample_live_state(), path, comparator, expected_value)
+		if bool(last_evaluation.get("passed", false)):
+			var success_verification: Dictionary = {
+				"passed": true,
+				"assertion": "wait_until",
+				"path": path,
+				"comparator": comparator,
+				"expected": expected_value,
+				"observed": last_evaluation.get("observed", null),
+				"frames_waited": frames_waited,
+				"timeout_frames": timeout_frames,
+				"message": "wait_until condition %s %s %s was met after %d frames (observed %s)." % [path, comparator, str(expected_value), frames_waited, str(last_evaluation.get("observed", null))],
+			}
+			return _build_assertion_step_result(success_verification, step_index, step, "wait_until failed.", "wait_until condition met.")
+
+		if frames_waited >= timeout_frames:
+			break
+
+		var frames_to_wait: int = mini(poll_every_frames, timeout_frames - frames_waited)
+		for _frame_index in range(frames_to_wait):
+			if stop_requested:
+				return _stop_with_result("timeout", 3, "Scenario execution was stopped during wait_until.")
+			await get_tree().physics_frame
+			current_physics_frame += 1
+		frames_waited += frames_to_wait
+
+	var timeout_checkpoint_name: String = "wait_until_timeout_step_%d" % step_index
+	await inspector.capture_checkpoint(timeout_checkpoint_name, loaded_harness, current_physics_frame)
+
+	var observed_summary: String = str(last_evaluation.get("observed", null)) if bool(last_evaluation.get("found", false)) else "path not found"
+	var failure_verification: Dictionary = {
+		"passed": false,
+		"status": "assertion_failure",
+		"exit_code": 1,
+		"assertion": "wait_until",
+		"path": path,
+		"comparator": comparator,
+		"expected": expected_value,
+		"observed": last_evaluation.get("observed", null),
+		"found": bool(last_evaluation.get("found", false)),
+		"frames_waited": frames_waited,
+		"timeout_frames": timeout_frames,
+		"related_checkpoints": [timeout_checkpoint_name],
+		"message": "wait_until timed out after %d frames waiting for %s %s %s (last observed: %s)." % [frames_waited, path, comparator, str(expected_value), observed_summary],
+	}
+	return _build_assertion_step_result(failure_verification, step_index, step, "wait_until timed out.", "wait_until condition met.")
+
+func _sample_live_state() -> Dictionary:
+	var harness_state: Dictionary = {}
+	if loaded_harness != null and is_instance_valid(loaded_harness) and loaded_harness.has_method("get_observed_state"):
+		var harness_state_variant: Variant = loaded_harness.call("get_observed_state")
+		if harness_state_variant is Dictionary:
+			harness_state = harness_state_variant
+	return {"harness_state": harness_state}
 
 func _step_assert_pipeline(step: Dictionary, step_index: int) -> Dictionary:
 	var verification: Dictionary = verifier.verify_pipeline(contract, inspector.get_checkpoints(), step)

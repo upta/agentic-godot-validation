@@ -52,6 +52,7 @@ Required top-level fields:
 | `press_action` | `{ op, action }` | Synthetic InputEventAction press |
 | `release_action` | `{ op, action }` | Synthetic InputEventAction release |
 | `wait_frames` | `{ op, frames }` | Waits exact number of physics frames |
+| `wait_until` | `{ op, path, comparator, expected, timeout_frames, poll_every_frames }` | Polls live `get_observed_state()` until the condition holds; `assertion_failure` after `timeout_frames` (default 300). Use for nondeterministic timing (network, deferred spawns) |
 | `assert_value` | `{ op, checkpoint, path, comparator, expected }` | Direct value check against checkpoint data |
 | `assert_pipeline` | `{ op, sources, pipeline, assert }` | Derived value check with named sources and transforms |
 | `quit` | `{ op }` | Stops execution, triggers final artifact validation |
@@ -91,6 +92,10 @@ func get_observed_state() -> Dictionary:
 // assert_value — direct checkpoint check
 { "op": "assert_value", "checkpoint": "after",
   "path": "harness_state.nodes.pause_menu.visible", "comparator": "eq", "expected": true }
+
+// wait_until — poll live state with a frame budget (network / async conditions)
+{ "op": "wait_until", "path": "harness_state.connection.player_count",
+  "comparator": "gte", "expected": 2, "timeout_frames": 300 }
 
 // assert_pipeline — derived value with contract threshold
 { "op": "assert_pipeline",
