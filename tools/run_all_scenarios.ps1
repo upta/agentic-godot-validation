@@ -257,11 +257,13 @@ for ($iteration = 1; $iteration -le $RepeatCount; $iteration++) {
         $scenarioAggregateMap[$scenarioId] = $aggregate
     }
 
+    # Any non-zero scenario exit fails the iteration. Use a 0/1 flag, NOT a numeric max:
+    # engine crashes report negative codes (e.g. -1073741819 / 0xC0000005) that a `-gt`
+    # comparison would treat as "less than a pass" and silently swallow.
     $iterationFinalExitCode = 0
     foreach ($iterationResult in $iterationResults) {
-        $scenarioExitCode = [int]$iterationResult.final_exit_code
-        if ($scenarioExitCode -gt $iterationFinalExitCode) {
-            $iterationFinalExitCode = $scenarioExitCode
+        if ([int]$iterationResult.final_exit_code -ne 0) {
+            $iterationFinalExitCode = 1
         }
     }
 
@@ -283,11 +285,12 @@ foreach ($scenarioId in ($scenarioAggregateMap.Keys | Sort-Object)) {
     $scenarioAggregate += [pscustomobject]$aggregate
 }
 
+# Any non-zero scenario exit fails the suite (0/1 flag, not numeric max — see the
+# per-iteration note above on negative crash codes).
 $finalExitCode = 0
 foreach ($result in $allResults) {
-    $scenarioExitCode = [int]$result.final_exit_code
-    if ($scenarioExitCode -gt $finalExitCode) {
-        $finalExitCode = $scenarioExitCode
+    if ([int]$result.final_exit_code -ne 0) {
+        $finalExitCode = 1
     }
 }
 
