@@ -110,6 +110,12 @@ func _apply_deterministic_settings() -> void:
 
 	if DisplayServer.get_name() != "headless":
 		DisplayServer.window_set_size(FIXED_WINDOW_SIZE)
+		# Keep test windows from taking OS focus. When scenarios run in parallel,
+		# a newly-launched instance would otherwise steal focus from the others,
+		# and Godot releases all held input actions on focus-out — which silently
+		# zeroes movement in input-driven scenarios. No-focus windows still render
+		# (screenshots and render-frame-dependent assertions are unaffected).
+		DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_NO_FOCUS, true)
 
 	var master_bus_index: int = AudioServer.get_bus_index("Master")
 	if master_bus_index >= 0:

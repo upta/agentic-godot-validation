@@ -10,7 +10,8 @@ param(
     [int]$Screen = -1,
     [int]$KeepLatestPerScenario = 10,
     [int]$KeepLatestSuiteRuns = 10,
-    [int]$RepeatCount = 1
+    [int]$RepeatCount = 1,
+    [int]$MaxParallel = 4
 )
 
 $ErrorActionPreference = "Stop"
@@ -80,12 +81,72 @@ function Get-SuiteStatus {
     return "pass"
 }
 
+# Runs a batch of scenarios concurrently (ThrottleLimit = MaxParallel) and returns,
+# for each scenario file, the captured run_scenario.ps1 output lines and its exit code.
+# Parallel safety: each scenario is its own Godot process writing a unique timestamped
+# artifact dir; -SkipArtifactPrune avoids concurrent prune races (a single prune runs at
+# the end of the suite). Test windows open with WINDOW_FLAG_NO_FOCUS so concurrent
+# instances never steal each other's input focus.
+function Invoke-ScenarioBatch {
+    param(
+        [System.IO.FileInfo[]]$ScenarioFiles,
+        [int]$MaxParallel,
+        [string]$RunScenarioScriptPath,
+        [string]$ResolvedProjectPath,
+        [string]$GodotExe,
+        [int]$Screen,
+        [int]$KeepLatestPerScenario
+    )
+
+    $effectiveThrottle = [Math]::Max(1, $MaxParallel)
+
+    if ($effectiveThrottle -eq 1) {
+        $serialOutputs = @()
+        foreach ($scenarioFile in $ScenarioFiles) {
+            Write-Output ("RUNNING {0}" -f $scenarioFile.Name)
+            $runOutput = & $RunScenarioScriptPath `
+                -Scenario $scenarioFile.FullName `
+                -ProjectPath $ResolvedProjectPath `
+                -GodotExe $GodotExe `
+                -Screen $Screen `
+                -KeepLatestPerScenario $KeepLatestPerScenario `
+                -SkipArtifactPrune
+            $serialOutputs += [pscustomobject]@{
+                FullName = $scenarioFile.FullName
+                Output   = @($runOutput)
+                Exit     = $LASTEXITCODE
+            }
+        }
+        return $serialOutputs
+    }
+
+    return $ScenarioFiles | ForEach-Object -ThrottleLimit $effectiveThrottle -Parallel {
+        $scenarioFile = $_
+        $runOutput = & $using:RunScenarioScriptPath `
+            -Scenario $scenarioFile.FullName `
+            -ProjectPath $using:ResolvedProjectPath `
+            -GodotExe $using:GodotExe `
+            -Screen $using:Screen `
+            -KeepLatestPerScenario $using:KeepLatestPerScenario `
+            -SkipArtifactPrune 2>&1
+        [pscustomobject]@{
+            FullName = $scenarioFile.FullName
+            Output   = @($runOutput)
+            Exit     = $LASTEXITCODE
+        }
+    }
+}
+
 if ($RepeatCount -lt 1) {
     throw "RepeatCount must be 1 or greater."
 }
 
 if ($KeepLatestSuiteRuns -lt 0) {
     throw "KeepLatestSuiteRuns must be 0 or greater."
+}
+
+if ($MaxParallel -lt 1) {
+    throw "MaxParallel must be 1 or greater."
 }
 
 $resolvedProjectPath = (Resolve-Path $ProjectPath).Path
@@ -109,27 +170,35 @@ $iterations = @()
 $scenarioAggregateMap = @{}
 
 for ($iteration = 1; $iteration -le $RepeatCount; $iteration++) {
-    Write-Output (("ITERATION {0}/{1}" -f $iteration, $RepeatCount))
+    Write-Output (("ITERATION {0}/{1} (max parallel {2})" -f $iteration, $RepeatCount, $MaxParallel))
     $iterationResults = @()
 
+    # Run phase: execute every scenario (concurrently when MaxParallel > 1), then
+    # index the captured output by scenario path so the aggregation below stays serial
+    # and deterministic regardless of completion order.
+    $batchOutputs = Invoke-ScenarioBatch `
+        -ScenarioFiles $scenarioFiles `
+        -MaxParallel $MaxParallel `
+        -RunScenarioScriptPath $runScenarioScriptPath `
+        -ResolvedProjectPath $resolvedProjectPath `
+        -GodotExe $GodotExe `
+        -Screen $Screen `
+        -KeepLatestPerScenario $KeepLatestPerScenario
+
+    $outputsByFile = @{}
+    foreach ($batchOutput in $batchOutputs) {
+        $outputsByFile[[string]$batchOutput.FullName] = $batchOutput
+    }
+
     foreach ($scenarioFile in $scenarioFiles) {
-        Write-Output (("RUNNING {0} (iteration {1}/{2})" -f $scenarioFile.Name, $iteration, $RepeatCount))
-
-        $runOutput = & $runScenarioScriptPath `
-            -Scenario $scenarioFile.FullName `
-            -ProjectPath $resolvedProjectPath `
-            -GodotExe $GodotExe `
-            -Screen $Screen `
-            -KeepLatestPerScenario $KeepLatestPerScenario `
-            -SkipArtifactPrune
-        $runExitCode = $LASTEXITCODE
-
-        foreach ($outputLine in $runOutput) {
-            Write-Output $outputLine
-        }
+        $batchOutput = $outputsByFile[[string]$scenarioFile.FullName]
+        $runOutput = if ($null -ne $batchOutput) { @($batchOutput.Output) } else { @() }
+        $runExitCode = if ($null -ne $batchOutput) { [int]$batchOutput.Exit } else { 1 }
 
         $resultLine = $runOutput | Where-Object { $_ -like "RESULT *" } | Select-Object -Last 1
         $artifactsLine = $runOutput | Where-Object { $_ -like "ARTIFACTS *" } | Select-Object -Last 1
+
+        Write-Output (("RAN {0} (iteration {1}/{2}) exit={3}" -f $scenarioFile.Name, $iteration, $RepeatCount, $runExitCode))
 
         if ($null -eq $resultLine) {
             $result = [ordered]@{
@@ -233,6 +302,7 @@ $suite = [ordered]@{
     suite_summary_path = Convert-ToProjectRelativePath -Path $suiteJsonPath -ResolvedProjectPath $resolvedProjectPath
     scenario_directory = Convert-ToProjectRelativePath -Path $resolvedScenarioDirectory -ResolvedProjectPath $resolvedProjectPath
     repeat_count = $RepeatCount
+    max_parallel = $MaxParallel
     iteration_count = $iterations.Count
     suite_status = Get-SuiteStatus -HasFailures ($failedScenarioIds.Count -gt 0) -HasFlakyScenarios ($flakyScenarioIds.Count -gt 0)
     final_exit_code = $finalExitCode
