@@ -11,7 +11,9 @@ param(
     [int]$KeepLatestPerScenario = 10,
     [int]$KeepLatestSuiteRuns = 10,
     [int]$RepeatCount = 1,
-    [int]$MaxParallel = 4
+    [int]$MaxParallel = 4,
+    [switch]$Record,
+    [int]$RecordFps = 30
 )
 
 $ErrorActionPreference = "Stop"
@@ -95,7 +97,9 @@ function Invoke-ScenarioBatch {
         [string]$ResolvedProjectPath,
         [string]$GodotExe,
         [int]$Screen,
-        [int]$KeepLatestPerScenario
+        [int]$KeepLatestPerScenario,
+        [switch]$Record,
+        [int]$RecordFps
     )
 
     $effectiveThrottle = [Math]::Max(1, $MaxParallel)
@@ -110,6 +114,8 @@ function Invoke-ScenarioBatch {
                 -GodotExe $GodotExe `
                 -Screen $Screen `
                 -KeepLatestPerScenario $KeepLatestPerScenario `
+                -Record:$Record `
+                -RecordFps $RecordFps `
                 -SkipArtifactPrune
             $serialOutputs += [pscustomobject]@{
                 FullName = $scenarioFile.FullName
@@ -128,6 +134,8 @@ function Invoke-ScenarioBatch {
             -GodotExe $using:GodotExe `
             -Screen $using:Screen `
             -KeepLatestPerScenario $using:KeepLatestPerScenario `
+            -Record:$using:Record `
+            -RecordFps $using:RecordFps `
             -SkipArtifactPrune 2>&1
         [pscustomobject]@{
             FullName = $scenarioFile.FullName
@@ -183,7 +191,9 @@ for ($iteration = 1; $iteration -le $RepeatCount; $iteration++) {
         -ResolvedProjectPath $resolvedProjectPath `
         -GodotExe $GodotExe `
         -Screen $Screen `
-        -KeepLatestPerScenario $KeepLatestPerScenario
+        -KeepLatestPerScenario $KeepLatestPerScenario `
+        -Record:$Record `
+        -RecordFps $RecordFps
 
     $outputsByFile = @{}
     foreach ($batchOutput in $batchOutputs) {

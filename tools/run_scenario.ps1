@@ -9,6 +9,8 @@ param(
     [string]$GodotExe = $env:GODOT_EXE,
     [int]$Screen = -1,
     [int]$KeepLatestPerScenario = 10,
+    [switch]$Record,
+    [int]$RecordFps = 30,
     [switch]$SkipArtifactPrune
 )
 
@@ -110,6 +112,18 @@ $arguments = @(
 
 if ($Screen -ge 0) {
     $arguments += @("--screen", $Screen.ToString())
+}
+
+# Optional playback recording (Godot Movie Maker): writes the whole run to an .avi
+# in this run's artifact dir at the requested fps. Renders offscreen, so it works
+# headless / on software GPUs where the live window stays blank.
+if ($Record) {
+    $arguments += @(
+        "--write-movie",
+        (Join-Path $runArtifactsPath "playback.avi"),
+        "--fixed-fps",
+        $RecordFps.ToString()
+    )
 }
 
 $arguments += @(
