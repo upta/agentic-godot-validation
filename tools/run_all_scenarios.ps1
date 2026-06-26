@@ -13,7 +13,16 @@ param(
     [int]$RepeatCount = 1,
     [int]$MaxParallel = 4,
     [switch]$Record,
-    [int]$RecordFps = 30
+    [int]$RecordFps = 30,
+    # After the parallel pass, re-run each failed scenario ONCE, serially, on its own process.
+    # A parallel-only failure is usually environmental (CPU/focus contention), so the single
+    # uncontended attempt is the diagnostic. -RerunVerdict annotate (default, safe for a generic
+    # kit): report the scenario as recovered/failed_both but KEEP the failure (suite stays red).
+    # forgive: a scenario that passes the re-run is treated as passed for the suite verdict — opt
+    # in per project (Nomad's pure suite passes -RerunVerdict forgive via validate_all). Skipped
+    # for serial runs (MaxParallel 1) and disabled by -NoRerun.
+    [switch]$NoRerun,
+    [ValidateSet("forgive", "annotate")][string]$RerunVerdict = "annotate"
 )
 
 $ErrorActionPreference = "Stop"
@@ -83,6 +92,19 @@ function Get-SuiteStatus {
     return "pass"
 }
 
+# Resolve a scenario's id from its CONTRACT (the canonical key the rest of suite.json uses) rather
+# than the filename — the kit must not assume filename == scenario_id. Falls back to the file stem
+# if the contract can't be read. Used to key the re-run classification lists to scenario_id.
+function Get-ScenarioId {
+    param([System.IO.FileInfo]$ScenarioFile)
+    try {
+        $contract = Get-Content -Path $ScenarioFile.FullName -Raw | ConvertFrom-Json
+        if ($contract -and $contract.scenario_id) { return [string]$contract.scenario_id }
+    }
+    catch { }
+    return $ScenarioFile.BaseName
+}
+
 # Runs a batch of scenarios concurrently (ThrottleLimit = MaxParallel) and returns,
 # for each scenario file, the captured run_scenario.ps1 output lines and its exit code.
 # Parallel safety: each scenario is its own Godot process writing a unique timestamped
@@ -108,6 +130,7 @@ function Invoke-ScenarioBatch {
         $serialOutputs = @()
         foreach ($scenarioFile in $ScenarioFiles) {
             Write-Output ("RUNNING {0}" -f $scenarioFile.Name)
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
             $runOutput = & $RunScenarioScriptPath `
                 -Scenario $scenarioFile.FullName `
                 -ProjectPath $ResolvedProjectPath `
@@ -117,10 +140,13 @@ function Invoke-ScenarioBatch {
                 -Record:$Record `
                 -RecordFps $RecordFps `
                 -SkipArtifactPrune
+            $exit = $LASTEXITCODE
+            $sw.Stop()
             $serialOutputs += [pscustomobject]@{
                 FullName = $scenarioFile.FullName
                 Output   = @($runOutput)
-                Exit     = $LASTEXITCODE
+                Exit     = $exit
+                Duration = [math]::Round($sw.Elapsed.TotalSeconds, 2)
             }
         }
         return $serialOutputs
@@ -128,6 +154,7 @@ function Invoke-ScenarioBatch {
 
     return $ScenarioFiles | ForEach-Object -ThrottleLimit $effectiveThrottle -Parallel {
         $scenarioFile = $_
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
         $runOutput = & $using:RunScenarioScriptPath `
             -Scenario $scenarioFile.FullName `
             -ProjectPath $using:ResolvedProjectPath `
@@ -137,10 +164,13 @@ function Invoke-ScenarioBatch {
             -Record:$using:Record `
             -RecordFps $using:RecordFps `
             -SkipArtifactPrune 2>&1
+        $exit = $LASTEXITCODE
+        $sw.Stop()
         [pscustomobject]@{
             FullName = $scenarioFile.FullName
             Output   = @($runOutput)
-            Exit     = $LASTEXITCODE
+            Exit     = $exit
+            Duration = [math]::Round($sw.Elapsed.TotalSeconds, 2)
         }
     }
 }
@@ -176,6 +206,14 @@ $suiteStartedUtc = (Get-Date).ToUniversalTime()
 $allResults = @()
 $iterations = @()
 $scenarioAggregateMap = @{}
+# Re-run + efficiency-stats accumulators (see the serial re-run block + the stats record below).
+$doRerun = (-not $NoRerun) -and ($MaxParallel -gt 1)
+$parallelMsecTotal = 0
+$rerunMsecTotal = 0
+$sumScenarioSecTotal = 0.0
+$recoveredIds = @()
+$failedBothIds = @()
+$failedParallelIds = @()
 
 for ($iteration = 1; $iteration -le $RepeatCount; $iteration++) {
     Write-Output (("ITERATION {0}/{1} (max parallel {2})" -f $iteration, $RepeatCount, $MaxParallel))
@@ -184,6 +222,7 @@ for ($iteration = 1; $iteration -le $RepeatCount; $iteration++) {
     # Run phase: execute every scenario (concurrently when MaxParallel > 1), then
     # index the captured output by scenario path so the aggregation below stays serial
     # and deterministic regardless of completion order.
+    $parallelSw = [System.Diagnostics.Stopwatch]::StartNew()
     $batchOutputs = Invoke-ScenarioBatch `
         -ScenarioFiles $scenarioFiles `
         -MaxParallel $MaxParallel `
@@ -194,10 +233,61 @@ for ($iteration = 1; $iteration -le $RepeatCount; $iteration++) {
         -KeepLatestPerScenario $KeepLatestPerScenario `
         -Record:$Record `
         -RecordFps $RecordFps
+    $parallelSw.Stop()
+    $parallelMsecTotal += $parallelSw.ElapsedMilliseconds
+    # Σ of per-scenario PARALLEL-pass durations = the contended upper-bound serial estimate.
+    $sumScenarioSecTotal += (@($batchOutputs | ForEach-Object { [double]$_.Duration }) | Measure-Object -Sum).Sum
 
     $outputsByFile = @{}
     foreach ($batchOutput in $batchOutputs) {
         $outputsByFile[[string]$batchOutput.FullName] = $batchOutput
+    }
+
+    # Serial re-run of this iteration's parallel failures (single attempt each). A parallel-only
+    # failure that passes serially is "recovered" (environmental); one that fails again is
+    # "failed_both" (genuine). Under -RerunVerdict forgive the recovered scenario's result is
+    # replaced with its passing re-run so the aggregation below treats it as a pass; under
+    # annotate the original failure stands (suite stays red). Either way the classification +
+    # phase timing feed the efficiency stats. Serial runs / -NoRerun skip this entirely.
+    if ($doRerun) {
+        $failedFiles = @($scenarioFiles | Where-Object {
+                $b = $outputsByFile[[string]$_.FullName]
+                ($null -eq $b) -or ([int]$b.Exit -ne 0)
+            })
+        if ($failedFiles.Count -gt 0) {
+            $failedParallelIds += @($failedFiles | ForEach-Object { Get-ScenarioId -ScenarioFile $_ })
+            Write-Output ("RERUN {0} failed scenario(s) serially (verdict={1}): {2}" -f `
+                    $failedFiles.Count, $RerunVerdict, (($failedFiles | ForEach-Object { $_.Name }) -join ", "))
+            $rerunSw = [System.Diagnostics.Stopwatch]::StartNew()
+            $rerunOutputs = Invoke-ScenarioBatch `
+                -ScenarioFiles $failedFiles `
+                -MaxParallel 1 `
+                -RunScenarioScriptPath $runScenarioScriptPath `
+                -ResolvedProjectPath $resolvedProjectPath `
+                -GodotExe $GodotExe `
+                -Screen $Screen `
+                -KeepLatestPerScenario $KeepLatestPerScenario `
+                -Record:$Record `
+                -RecordFps $RecordFps
+            $rerunSw.Stop()
+            $rerunMsecTotal += $rerunSw.ElapsedMilliseconds
+
+            $rerunByFile = @{}
+            foreach ($ro in $rerunOutputs) { $rerunByFile[[string]$ro.FullName] = $ro }
+            foreach ($failedFile in $failedFiles) {
+                $ro = $rerunByFile[[string]$failedFile.FullName]
+                $rerunPassed = ($null -ne $ro) -and ([int]$ro.Exit -eq 0)
+                $rerunId = Get-ScenarioId -ScenarioFile $failedFile
+                if ($rerunPassed) {
+                    $recoveredIds += $rerunId
+                    # forgive: the passing serial re-run stands in for the failed parallel result.
+                    if ($RerunVerdict -eq "forgive") { $outputsByFile[[string]$failedFile.FullName] = $ro }
+                }
+                else {
+                    $failedBothIds += $rerunId
+                }
+            }
+        }
     }
 
     foreach ($scenarioFile in $scenarioFiles) {
@@ -308,6 +398,15 @@ $flakyScenarioIds = @($scenarioAggregate | Where-Object { [bool]$_.flaky } | Sel
 $failedScenarioIds = @($scenarioAggregate | Where-Object { [bool]$_.failed } | Select-Object -ExpandProperty scenario_id)
 $suiteCompletedUtc = (Get-Date).ToUniversalTime()
 $suiteElapsedMsec = [int][Math]::Round(($suiteCompletedUtc - $suiteStartedUtc).TotalMilliseconds)
+
+# Disjoint, scenario_id-keyed classification for the stats: failed_both WINS over recovered (a
+# scenario that ever failed both passes is genuinely broken). This keeps the two lists disjoint
+# even when RepeatCount>1 lands the same scenario in both across iterations, so the aggregator's
+# recovery_rate = |recovered_on_rerun| / |failed_parallel| stays well-defined.
+$failedBothFinal = @($failedBothIds | Sort-Object -Unique)
+$recoveredFinal = @($recoveredIds | Sort-Object -Unique | Where-Object { $_ -notin $failedBothFinal })
+$failedParallelFinal = @($failedParallelIds | Sort-Object -Unique)
+
 $suiteJsonPath = Join-Path $suiteRunPath "suite.json"
 $suite = [ordered]@{
     suite_run_id = $suiteRunId
@@ -332,11 +431,42 @@ $suite = [ordered]@{
     started_utc = $suiteStartedUtc.ToString("o")
     completed_utc = $suiteCompletedUtc.ToString("o")
     elapsed_msec = $suiteElapsedMsec
+    parallel_phase_sec = [math]::Round($parallelMsecTotal / 1000, 2)
+    rerun_phase_sec = [math]::Round($rerunMsecTotal / 1000, 2)
+    rerun_verdict = $RerunVerdict
+    recovered_on_rerun = $recoveredFinal
+    failed_both = $failedBothFinal
     scenario_aggregate = $scenarioAggregate
     iterations = $iterations
 }
 
 $suite | ConvertTo-Json -Depth 20 | Set-Content -Path $suiteJsonPath -Encoding utf8
+
+# Append a per-run efficiency record to the project's append-only timing log. Kept project-relative
+# (under the same artifacts root as the suites) so the kit stays game-agnostic, and stamped with
+# host/cores so records are never mixed across machines. A shared aggregator compares this against
+# any other suite's records to answer "is parallel (with reruns) worth it?".
+$statsDir = Join-Path $artifactsRoot "stats"
+$null = New-Item -ItemType Directory -Path $statsDir -Force
+$statsRecord = [ordered]@{
+    timestamp          = (Get-Date).ToUniversalTime().ToString("o")
+    suite              = "pure"
+    suite_run_id       = $suiteRunId
+    host               = [System.Environment]::MachineName
+    cores              = [System.Environment]::ProcessorCount
+    max_parallel       = $MaxParallel
+    scenario_count     = $scenarioFiles.Count
+    parallel_phase_sec = [math]::Round($parallelMsecTotal / 1000, 2)
+    rerun_phase_sec    = [math]::Round($rerunMsecTotal / 1000, 2)
+    total_sec          = [math]::Round(($parallelMsecTotal + $rerunMsecTotal) / 1000, 2)
+    sum_scenario_sec   = [math]::Round($sumScenarioSecTotal, 2)
+    failed_parallel    = $failedParallelFinal
+    recovered_on_rerun = $recoveredFinal
+    failed_both        = $failedBothFinal
+    verdict_policy     = $RerunVerdict
+    suite_status       = $suite.suite_status
+}
+($statsRecord | ConvertTo-Json -Depth 6 -Compress) | Add-Content -Path (Join-Path $statsDir "test_timings.jsonl") -Encoding utf8
 
 & $pruneScriptPath -ProjectPath $resolvedProjectPath -KeepLatestPerScenario $KeepLatestPerScenario -KeepLatestSuiteRuns $KeepLatestSuiteRuns -ScenarioDirectories $resolvedScenarioDirectory | Out-Null
 
