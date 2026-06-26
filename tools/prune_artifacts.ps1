@@ -106,7 +106,20 @@ function Remove-ArtifactDirectory {
     )
 
     if ($PSCmdlet.ShouldProcess($Directory.FullName, "Remove artifact directory ($Reason)")) {
-        Remove-Item -Path $Directory.FullName -Recurse -Force
+        try {
+            Remove-Item -Path $Directory.FullName -Recurse -Force -ErrorAction Stop
+        }
+        catch {
+            # A transiently-locked file (e.g. a console.log a just-exited Godot or an AV scan still
+            # holds on Windows) must NOT abort the whole prune — and, since callers run with
+            # $ErrorActionPreference='Stop', must not take the suite down before it emits its
+            # SUITE/exit/stats output. Warn and leave the dir for the next prune to reclaim.
+            Write-Warning ("Could not remove artifact dir '{0}' ({1}): {2}" -f $Directory.FullName, $Reason, $_.Exception.Message)
+            return [pscustomobject]@{
+                path = $Directory.FullName
+                reason = ("{0}:removal_failed" -f $Reason)
+            }
+        }
     }
 
     return [pscustomobject]@{
@@ -190,7 +203,7 @@ function Write-ArtifactManifests {
 
     $scenarioDirectories = Get-ChildItem -Path $ArtifactsRoot -Directory | Sort-Object Name
     foreach ($scenarioDirectory in $scenarioDirectories) {
-        if ([string]$scenarioDirectory.Name -eq "suites") {
+        if ([string]$scenarioDirectory.Name -eq "suites" -or [string]$scenarioDirectory.Name -eq "stats") {
             continue
         }
 
@@ -322,7 +335,9 @@ $artifactScenarioDirectories = Get-ChildItem -Path $artifactsRoot -Directory | S
 foreach ($artifactScenarioDirectory in $artifactScenarioDirectories) {
     $scenarioId = [string]$artifactScenarioDirectory.Name
 
-    if ($scenarioId -eq "suites") {
+    # "suites" holds suite-run records; "stats" holds the append-only timing log. Both are
+    # reserved (not scenario artifact dirs), so never prune them as "unknown scenarios".
+    if ($scenarioId -eq "suites" -or $scenarioId -eq "stats") {
         continue
     }
 
