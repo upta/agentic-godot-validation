@@ -3,6 +3,7 @@ param(
     [string]$ProjectPath = $(
         $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
         if (Test-Path (Join-Path $root "project.godot")) { $root }
+        elseif (Test-Path (Join-Path $root "src" "project.godot")) { Join-Path $root "src" }
         elseif (Test-Path (Join-Path $root "client" "project.godot")) { Join-Path $root "client" }
         else { $root }
     ),
