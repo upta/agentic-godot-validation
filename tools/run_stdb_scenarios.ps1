@@ -169,11 +169,14 @@ finally {
 }
 
 # Locate the compiled wasm the build just produced (prefer the wasm-opt output that a normal
-# publish would upload; fall back per the configured WasmGlob order).
+# publish would upload; fall back per the configured WasmGlob order). The .NET wasi build also
+# emits the runtime `dotnet.wasm` alongside the module bundle — exclude it by name so a bare
+# '*.wasm' fallback still resolves to the module on hosts without wasm-opt installed.
 $moduleDir = Join-Path $serverDir ($config.ModulePath -replace '^\.[\\/]', '')
 $wasmPath = $null
 foreach ($pattern in $config.WasmGlob) {
     $candidate = Get-ChildItem $moduleDir -Recurse -Filter $pattern -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -ne 'dotnet.wasm' } |
         Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if ($candidate) { $wasmPath = $candidate.FullName; break }
 }

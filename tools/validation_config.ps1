@@ -43,7 +43,10 @@ function Import-ValidationConfig {
     $ephemeralPrefix = [string](Pick $user.EphemeralPrefix ("$appName-test"))
     $serverRecycleEvery = [int](Pick $user.ServerRecycleEvery 0)
 
-    $wasmGlob = if ($user.WasmGlob) { @($user.WasmGlob) } else { @('*.opt.wasm', '*_for-publish.wasm') }
+    # Discovery order under the module's build output: the wasm-opt output a publish would upload
+    # if wasm-opt is installed, else the plain AppBundle module bundle. The runner excludes the
+    # runtime `dotnet.wasm` by name, so a bare '*.wasm' fallback is safe on machines without wasm-opt.
+    $wasmGlob = if ($user.WasmGlob) { @($user.WasmGlob) } else { @('*.opt.wasm', '*.wasm') }
 
     # Env-var contract (runner sets these; the C# client reads them). Fixed names by default.
     $envCfg = @{ Uri = 'STDB_TEST_URI'; Db = 'STDB_TEST_DB'; ClientId = 'STDB_TEST_CLIENT_ID' }
