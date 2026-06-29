@@ -23,14 +23,14 @@ function Import-ValidationConfig {
     function Pick { param($Value, $Default) if ($null -ne $Value -and "$Value" -ne "") { return $Value } return $Default }
 
     # Auto-detect the Godot client root: a project.godot at the repo root (single-root layout),
-    # else src/, else client/.
+    # else client/. Specify ClientRoot explicitly for any other layout.
     $clientRoot = [string](Pick $user.ClientRoot $(
             $detected = $null
-            foreach ($c in @('.', 'src', 'client')) {
+            foreach ($c in @('.', 'client')) {
                 $p = if ($c -eq '.') { $RepoRoot } else { Join-Path $RepoRoot $c }
                 if (Test-Path (Join-Path $p 'project.godot')) { $detected = $c; break }
             }
-            if ($detected) { $detected } else { 'src' }
+            if ($detected) { $detected } else { 'client' }
         ))
 
     $appName = [string](Pick $user.AppName (Split-Path $RepoRoot -Leaf))
