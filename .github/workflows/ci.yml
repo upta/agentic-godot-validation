@@ -1,0 +1,19 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit-tests:
+    # Engine-free pure-logic checks (STDB suite verdict + timing aggregator). No Godot, no
+    # SpacetimeDB, no display — they run anywhere pwsh does, in milliseconds. The in-engine
+    # validation suites are intentionally NOT run here (they need a GPU + a real spacetime
+    # server); run those locally before tagging.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run engine-free unit checks
+        shell: pwsh
+        run: ./tools/tests/run_tests.ps1
