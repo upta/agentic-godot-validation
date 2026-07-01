@@ -29,15 +29,25 @@ $config = Import-ValidationConfig -RepoRoot $repoRoot
 $statsLog = Join-Path $config.ArtifactsDir "stats/test_timings.jsonl"
 $statsPriorCount = if (Test-Path $statsLog) { @(Get-Content $statsLog).Count } else { 0 }
 
-Write-Host "=== Pure validation suite ($($config.ClientRoot)/validation/scenarios) ===" -ForegroundColor Cyan
-# Pure-suite policy is forgive: a scenario that fails the parallel pass but passes the serial re-run
-# is environmental here, so it's treated as passed. STDB stays strict in its own runner.
-$pureArgs = @{ GodotExe = $GodotExe; RerunVerdict = "forgive"; ProjectPath = $config.ClientDir }
-if ($PureMaxParallel -gt 0) { $pureArgs.MaxParallel = $PureMaxParallel }
-if ($Record) { $pureArgs.Record = $true; $pureArgs.RecordFps = $RecordFps }
-if ($NoRerun) { $pureArgs.NoRerun = $true }
-& (Join-Path $PSScriptRoot "run_all_scenarios.ps1") @pureArgs
-$pureExit = $LASTEXITCODE
+# Skip a tier that has no scenarios yet (e.g. a networked-only project with only scenarios_stdb, or
+# vice versa) instead of failing — an empty tier is a no-op pass, not a suite failure.
+$pureDir = Join-Path $config.ClientDir "validation/scenarios"
+$purePresent = (Test-Path $pureDir) -and (@(Get-ChildItem $pureDir -Filter *.json -File -ErrorAction SilentlyContinue).Count -gt 0)
+if ($purePresent) {
+    Write-Host "=== Pure validation suite ($($config.ClientRoot)/validation/scenarios) ===" -ForegroundColor Cyan
+    # Pure-suite policy is forgive: a scenario that fails the parallel pass but passes the serial
+    # re-run is environmental here, so it's treated as passed. STDB stays strict in its own runner.
+    $pureArgs = @{ GodotExe = $GodotExe; RerunVerdict = "forgive"; ProjectPath = $config.ClientDir }
+    if ($PureMaxParallel -gt 0) { $pureArgs.MaxParallel = $PureMaxParallel }
+    if ($Record) { $pureArgs.Record = $true; $pureArgs.RecordFps = $RecordFps }
+    if ($NoRerun) { $pureArgs.NoRerun = $true }
+    & (Join-Path $PSScriptRoot "run_all_scenarios.ps1") @pureArgs
+    $pureExit = $LASTEXITCODE
+}
+else {
+    Write-Host "=== Pure validation suite — no scenarios under $($config.ClientRoot)/validation/scenarios, skipping ===" -ForegroundColor DarkYellow
+    $pureExit = 0
+}
 
 Write-Host "=== SpacetimeDB validation suite ($($config.ScenariosStdbDir)) ===" -ForegroundColor Cyan
 $stdbArgs = @{ GodotExe = $GodotExe }
